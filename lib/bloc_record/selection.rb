@@ -99,6 +99,35 @@ module Selection
     end
 
     def find_each(options = {})
+    start = options[:start]
+    batch_size = options[:batch_size]
+    if start != nil && batch_size != nil
+      rows = connection.execute <<-SQL
+        SELECT #{columns.join ","} FROM #{table}
+        LIMIT #{batch_size} OFFSET #{start};
+      SQL
+    elsif start == nil && batch_size != nil
+      rows = connection.execute <<-SQL
+        SELECT #{columns.join ","} FROM #{table}
+        LIMIT #{batch_size};
+      SQL
+    elsif start != nil && batch_size == nil
+      rows = connection.execute <<-SQL
+        SELECT #{columns.join ","} FROM #{table}
+        OFFSET #{start};
+      SQL
+    else
+      rows = connection.execute <<-SQL
+        SELECT #{columns.join ","} FROM #{table};
+      SQL
+    end
+
+    rows.each do |row|
+      yield init_object_from_row(row)
+    end
+  end
+
+    def find_in_batches(options = {})
       start = options[:start]
       batch_size = options[:batch_size]
       if start != nil && batch_size != nil
@@ -123,22 +152,88 @@ module Selection
       end
 
       row_array = rows_to_array(rows)
-
       yield(row_array)
-
     end
 
-    def find_in_batches(start, batch_size)
-      rows = connection.execute <<-SQL
+    def where(*args)
+      if args.count > 1
+        expression = args.shift
+        params = args
+      else
+        case args.first
+        when String
+          expression = args.first
+        when Symbol
+          expression = args.first.to_s
+        when Hash
+          expression_hash = BlocRecord::Utility.convert_keys(args.first)
+          expression = expression_hash.map {|key, value| "#{key}=#{BlocRecord::Utility.sql_strings(value)}"}.join(" and ")
+        end
+      end
+
+      sql = <<-SQL
         SELECT #{columns.join ","} FROM #{table}
-        LIMIT #{batch_size} OFFSET #{start};
+        WHERE #{expression};
       SQL
 
-      row_array = rows_to_array(rows)
-
-      yield(row_array)
+      rows = connection.execute(sql, params)
+      rows_to_array(rows)
     end
-    
+
+
+    def order(*args)
+      orderArray = []
+      args.each do |arg|
+        case arg
+        when String
+          orderArray << arg
+        when Symbol
+          orderArray << arg.to_s
+        when Hash
+          orderArray << arg.map{|key, value| "#{key} #{value}"}
+        end
+      end
+      order = orderArray.join(",")
+      puts order
+
+      rows = connection.execute <<-SQL
+        SELECT * FROM #{table}
+        ORDER BY #{order};
+      SQL
+      rows_to_array(rows)
+    end
+
+    def join(*args)
+      if args.count > 1
+        joins = args.map { |arg| "INNER JOIN #{arg} ON #{arg}.#{table}_id = #{table}.id"}.join(" ")
+        rows = connection.execute <<-SQL
+          SELECT * FROM #{table} #{joins};
+        SQL
+      else
+        case args.first
+        when String
+          rows = connection.execute <<-SQL
+            SELECT * FROM #{table} #{BlocRecord::Utility.sql_strings(args.first)};
+          SQL
+        when Symbol
+          rows = connection.execute <<-SQL
+            SELECT * FROM #{table}
+            INNER JOIN #{args.first} ON #{args.first}.#{table}_id = #{table}.id;
+          SQL
+        when Hash
+          key = args.first.keys.first
+          value = args.first[key]
+          puts "#{key}, #{value}"
+          rows = connection.execute <<-SQL
+            SELECT * FROM #{table}
+            INNER JOIN #{key} ON #{key}.#{table}_id = #{table}.id
+    	      INNER JOIN #{value} ON #{value}.#{key}_id = #{key}.id
+    	    SQL
+        end
+      end
+
+      rows_to_array(rows)
+    end
 
   private
 
