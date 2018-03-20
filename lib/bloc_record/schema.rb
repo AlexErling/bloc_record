@@ -1,5 +1,6 @@
 require 'sqlite3'
 require 'bloc_record/utility'
+require 'pg'
 
 module Schema
   def table
@@ -30,5 +31,5 @@ module Schema
     SQL
   end
 
-            
+
 end
